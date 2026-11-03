@@ -9,14 +9,54 @@
   let errorMessage = $state('')
 
   let selectedShop = $state(null)
+  let barbers = $state([])
+  let services = $state([])
+  let detailLoading = $state(false)
+  let detailError = $state('')
 
-  function pilihBarbershop(shop) {
+  async function pilihBarbershop(shop) {
     selectedShop = shop
+    detailLoading = true
+    detailError = ''
+
+    barbers = []
+    services = []
+
+    try {
+     const [responseBarber, responseLayanan] = await Promise.all([
+        fetch('/api/barber'),
+        fetch('/api/layanan')
+      ])
+
+      if (!responseBarber.ok || !responseLayanan.ok) {
+        throw new Error('Gagal mengambil data barber dan layanan')
+      }
+
+      const hasilBarber = await responseBarber.json()
+      const hasilLayanan = await responseLayanan.json()
+
+      barbers = hasilBarber.data.filter(
+        (item) =>
+          item.barbershop_id === shop.id &&
+          item.status === 'aktif'
+      )
+
+      services = hasilLayanan.data.filter(
+        (item) => item.barbershop_id === shop.id
+      )
+    } catch (error) {
+      detailError = error.message
+    } finally {
+      detailLoading = false
+    }
   }
 
   function kembaliKeDaftar() {
     selectedShop = null
-    }
+    barbers = []
+    services = []
+    detailError = ''
+  }
     
   // Menghitung status buka berdasarkan jam operasional
   function cekStatusBuka(jamBuka, jamTutup) {
@@ -238,6 +278,84 @@
 </div>
 
   </section>
+  
+  {#if selectedShop}
+    <section class="shops-section detail-section">
+      <button class="back-button" onclick={kembaliKeDaftar}>
+        ← Kembali ke daftar
+      </button>
+
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">BARBERSHOP DETAIL</span>
+          <h2>{selectedShop.nama}</h2>
+          <p>Informasi lengkap barbershop pilihanmu.</p>
+        </div>
+      </div>
+
+      <div class="shop-card detail-card">
+        <div class="shop-info">
+          <h3>Informasi Barbershop</h3>
+          <p class="address">Alamat: {selectedShop.alamat}</p>
+          <p>Telepon: {selectedShop.telepon || 'Belum tersedia'}</p>
+          <p>
+            Jam operasional:
+            {selectedShop.jam_buka} - {selectedShop.jam_tutup}
+          </p>
+          <p>
+            Status:
+            <strong>{selectedShop.statusBuka ? 'Buka' : 'Tutup'}</strong>
+          </p>
+        </div>
+      </div>
+
+      {#if detailLoading}
+        <p class="empty">Memuat data barber dan layanan...</p>
+      {:else if detailError}
+        <p class="empty">{detailError}</p>
+      {:else}
+        <div class="detail-list">
+          <h3>Barber Kami</h3>
+
+          <div class="detail-grid">
+            {#each barbers as barber (barber.id)}
+              <article class="shop-card detail-item">
+                <div class="shop-info">
+                  <h4>{barber.nama}</h4>
+                  <p>Barber profesional</p>
+                  <span class="status">● Aktif</span>
+                </div>
+              </article>
+            {:else}
+              <p>Belum ada barber tersedia.</p>
+            {/each}
+          </div>
+        </div>
+
+        <div class="detail-list">
+          <h3>Layanan dan Harga</h3>
+
+          <div class="detail-grid">
+            {#each services as service (service.id)}
+              <article class="shop-card detail-item">
+                <div class="shop-info">
+                  <h4>{service.nama_layanan}</h4>
+                  <p class="service-price">
+                    Rp{Number(service.harga).toLocaleString('id-ID')}
+                  </p>
+                  <p>Durasi: {service.durasi} menit</p>
+                </div>
+              </article>
+            {:else}
+              <p>Belum ada layanan tersedia.</p>
+            {/each}
+          </div>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+
   {#if selectedShop}
     <section class="shops-section detail-section">
       <button class="back-button" onclick={kembaliKeDaftar}>
@@ -279,7 +397,7 @@
       </div>
     </section>
   {/if}
-  
+
   <section class="about-section" id="about">
     <span class="eyebrow">WHY BARBERBOOK?</span>
     <h2>Booking Lebih Mudah, Potong Rambut Lebih Nyaman.</h2>
