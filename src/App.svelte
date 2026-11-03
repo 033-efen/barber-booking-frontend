@@ -8,6 +8,16 @@
   let loading = $state(true)
   let errorMessage = $state('')
 
+  let selectedShop = $state(null)
+
+  function pilihBarbershop(shop) {
+    selectedShop = shop
+  }
+
+  function kembaliKeDaftar() {
+    selectedShop = null
+    }
+    
   // Menghitung status buka berdasarkan jam operasional
   function cekStatusBuka(jamBuka, jamTutup) {
     if (!jamBuka || !jamTutup) return false
@@ -213,9 +223,10 @@
               <strong>{shop.telepon || 'Belum tersedia'}</strong>
             </div>
 
-            <button disabled={!shop.statusBuka}>
+            <button onclick={() => pilihBarbershop(shop)}>
               Pilih →
             </button>
+
           </div>
         </div>
       </article>
@@ -227,7 +238,48 @@
 </div>
 
   </section>
+  {#if selectedShop}
+    <section class="shops-section detail-section">
+      <button class="back-button" onclick={kembaliKeDaftar}>
+        ← Kembali ke daftar
+      </button>
 
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">BARBERSHOP DETAIL</span>
+          <h2>{selectedShop.nama}</h2>
+          <p>Informasi lengkap barbershop pilihanmu.</p>
+        </div>
+      </div>
+
+      <div class="shop-card detail-card">
+        <div class="shop-info">
+          <h3>Informasi Barbershop</h3>
+
+          <p class="address">
+            Alamat: {selectedShop.alamat}
+          </p>
+
+          <p>
+            Telepon: {selectedShop.telepon || 'Belum tersedia'}
+          </p>
+
+          <p>
+            Jam operasional:
+            {selectedShop.jam_buka} - {selectedShop.jam_tutup}
+          </p>
+
+          <p>
+            Status:
+            <strong>
+              {selectedShop.statusBuka ? 'Buka' : 'Tutup'}
+            </strong>
+          </p>
+        </div>
+      </div>
+    </section>
+  {/if}
+  
   <section class="about-section" id="about">
     <span class="eyebrow">WHY BARBERBOOK?</span>
     <h2>Booking Lebih Mudah, Potong Rambut Lebih Nyaman.</h2>
