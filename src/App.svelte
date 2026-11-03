@@ -1,46 +1,79 @@
 
 <script>
-  let search = ''
-  let activeFilter = 'Semua'
+  import { onMount } from 'svelte'
 
-  const barbershops = [
-    {
-      id: 1,
-      name: 'Classic Barbershop',
-      address: 'Pamekasan Kota',
-      rating: '4.9',
-      distance: '1.2 km',
-      status: 'Buka',
-      price: 'Rp25.000',
-      image: 'https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=800'
-    },
-    {
-      id: 2,
-      name: 'Gentleman Cut',
-      address: 'Jl. Jokotole, Pamekasan',
-      rating: '4.8',
-      distance: '2.1 km',
-      status: 'Buka',
-      price: 'Rp30.000',
-      image: 'https://images.unsplash.com/photo- barber-placeholder'
-    },
-    {
-      id: 3,
-      name: 'Royal Barbershop',
-      address: 'Pamekasan, Madura',
-      rating: '4.7',
-      distance: '3 km',
-      status: 'Tutup',
-      price: 'Rp20.000',
-      image: 'https://images.unsplash.com/photo-1621605815971-fbc98d665033?w=800'
+  let search = $state('')
+  let activeFilter = $state('Semua')
+  let barbershops = $state([])
+  let loading = $state(true)
+  let errorMessage = $state('')
+
+  // Menghitung status buka berdasarkan jam operasional
+  function cekStatusBuka(jamBuka, jamTutup) {
+    if (!jamBuka || !jamTutup) return false
+
+    const sekarang = new Date()
+    const waktuSekarang =
+      sekarang.getHours() * 3600 +
+      sekarang.getMinutes() * 60 +
+      sekarang.getSeconds()
+
+    const [jam1, menit1, detik1] = jamBuka.split(':').map(Number)
+    const [jam2, menit2, detik2] = jamTutup.split(':').map(Number)
+
+    const mulai = jam1 * 3600 + menit1 * 60 + (detik1 || 0)
+    const selesai = jam2 * 3600 + menit2 * 60 + (detik2 || 0)
+
+    if (mulai <= selesai) {
+      return waktuSekarang >= mulai && waktuSekarang < selesai
     }
-  ]
 
+    // Mendukung barbershop yang buka melewati tengah malam
+    return waktuSekarang >= mulai || waktuSekarang < selesai
+  }
+
+  // Mengambil data dari backend
+  async function muatBarbershop() {
+    loading = true
+    errorMessage = ''
+
+    try {
+      const response = await fetch('/api/barbershop')
+
+      if (!response.ok) {
+        throw new Error('Gagal mengambil data barbershop')
+      }
+
+      const hasil = await response.json()
+
+      barbershops = hasil.data
+        .filter((shop) => shop.status === 'aktif')
+        .map((shop) => ({
+          ...shop,
+          statusBuka: cekStatusBuka(shop.jam_buka, shop.jam_tutup)
+        }))
+    } catch (error) {
+      errorMessage = error.message
+    } finally {
+      loading = false
+    }
+  }
+
+  onMount(() => {
+    muatBarbershop()
+  })
+
+  // Pencarian dan filter
   let filteredShops = $derived(
     barbershops.filter((shop) => {
-      const matchSearch = shop.name.toLowerCase().includes(search.toLowerCase())
+      const matchSearch =
+        shop.nama.toLowerCase().includes(search.toLowerCase()) ||
+        shop.alamat.toLowerCase().includes(search.toLowerCase())
+
+      const status = shop.statusBuka ? 'Buka' : 'Tutup'
+
       const matchFilter =
-        activeFilter === 'Semua' || shop.status === activeFilter
+        activeFilter === 'Semua' || status === activeFilter
 
       return matchSearch && matchFilter
     })
@@ -134,40 +167,65 @@
       </div>
     </div>
 
-    <div class="shop-grid">
-      {#each filteredShops as shop}
-        <article class="shop-card">
-          <div class="shop-image">
-            <img src={shop.image} alt={shop.name} />
-            <span class:closed={shop.status === 'Tutup'} class="status">
-              ● {shop.status}
-            </span>
-          </div>
 
-          <div class="shop-info">
-            <div class="shop-title">
-              <h3>{shop.name}</h3>
-              <span>★ {shop.rating}</span>
-            </div>
+<div class="shop-grid">
+  {#if loading}
+    <p class="empty">Sedang memuat data barbershop...</p>
 
-            <p class="address">⌖ {shop.address}</p>
-            <p class="distance">Jarak: {shop.distance}</p>
-
-            <div class="shop-footer">
-              <div>
-                <small>Mulai dari</small>
-                <strong>{shop.price}</strong>
-              </div>
-              <button disabled={shop.status === 'Tutup'}>
-                Pilih →
-              </button>
-            </div>
-          </div>
-        </article>
-      {:else}
-        <p class="empty">Barbershop tidak ditemukan.</p>
-      {/each}
+  {:else if errorMessage}
+    <div class="empty">
+      <p>{errorMessage}</p>
+      <button onclick={muatBarbershop}>Coba Lagi</button>
     </div>
+
+  {:else if filteredShops.length > 0}
+    {#each filteredShops as shop (shop.id)}
+      <article class="shop-card">
+        <div class="shop-image">
+          <img
+            src="https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=800"
+            alt={shop.nama}
+          />
+
+          <span
+            class:closed={!shop.statusBuka}
+            class="status"
+          >
+            ● {shop.statusBuka ? 'Buka' : 'Tutup'}
+          </span>
+        </div>
+
+        <div class="shop-info">
+          <div class="shop-title">
+            <h3>{shop.nama}</h3>
+          </div>
+
+          <p class="address">⌖ {shop.alamat}</p>
+
+          <p class="distance">
+            Jam operasional: {shop.jam_buka || '--:--'} -
+            {shop.jam_tutup || '--:--'}
+          </p>
+
+          <div class="shop-footer">
+            <div>
+              <small>Telepon</small>
+              <strong>{shop.telepon || 'Belum tersedia'}</strong>
+            </div>
+
+            <button disabled={!shop.statusBuka}>
+              Pilih →
+            </button>
+          </div>
+        </div>
+      </article>
+    {/each}
+
+  {:else}
+    <p class="empty">Barbershop tidak ditemukan.</p>
+  {/if}
+</div>
+
   </section>
 
   <section class="about-section" id="about">
