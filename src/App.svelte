@@ -1,7 +1,36 @@
 
 <script>
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
 
+  // AUTENTIKASI
+  let showAuthModal = $state(false)
+  let modeAuth = $state('login')
+  let authLoading = $state(false)
+  let authError = $state('')
+  let authSuccess = $state('')
+
+  let namaAuth = $state('')
+  let emailAuth = $state('')
+  let passwordAuth = $state('')
+
+  let token = $state(
+    typeof localStorage !== 'undefined'
+      ? localStorage.getItem('token') || ''
+      : ''
+  )
+
+  let user = $state(
+    typeof localStorage !== 'undefined'
+      ? JSON.parse(localStorage.getItem('user') || 'null')
+      : null
+  )
+
+  // RIWAYAT BOOKING
+  let riwayatBooking = $state([])
+  let riwayatLoading = $state(false)
+  let riwayatError = $state('')
+
+  // DATA BARBERSHOP
   let search = $state('')
   let activeFilter = $state('Semua')
   let barbershops = $state([])
@@ -14,6 +43,171 @@
   let detailLoading = $state(false)
   let detailError = $state('')
 
+  // DATA BOOKING
+  let selectedBarberId = $state('')
+  let selectedServiceId = $state('')
+  let namaPelanggan = $state('')
+  let tanggalBooking = $state('')
+  let jamBooking = $state('')
+
+  let bookingLoading = $state(false)
+  let bookingError = $state('')
+  let bookingSuccess = $state('')
+
+  // PROSES LOGIN DAN REGISTRASI
+  async function prosesAuth() {
+    authError = ''
+    authSuccess = ''
+
+    if (!emailAuth.trim() || !passwordAuth) {
+      authError = 'Email dan password wajib diisi.'
+      return
+    }
+
+    if (modeAuth === 'register' && !namaAuth.trim()) {
+      authError = 'Nama wajib diisi.'
+      return
+    }
+
+    authLoading = true
+
+    try {
+      const endpoint = modeAuth === 'login'
+        ? '/api/auth/login'
+        : '/api/auth/register'
+
+      const body = modeAuth === 'login'
+        ? {
+            email: emailAuth.trim(),
+            password: passwordAuth
+          }
+        : {
+            nama: namaAuth.trim(),
+            email: emailAuth.trim(),
+            password: passwordAuth
+          }
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+
+      const hasil = await response.json()
+
+      if (!response.ok) {
+        throw new Error(hasil.message || 'Autentikasi gagal.')
+      }
+
+      if (modeAuth === 'register') {
+        authSuccess = 'Registrasi berhasil. Silakan login.'
+        modeAuth = 'login'
+        namaAuth = ''
+        passwordAuth = ''
+        return
+      }
+
+      token = hasil.token
+      user = hasil.data
+
+      localStorage.setItem('token', token)
+      localStorage.setItem('user', JSON.stringify(user))
+
+      showAuthModal = false
+      authSuccess = ''
+      emailAuth = ''
+      passwordAuth = ''
+
+      // Memuat riwayat setelah login
+      await muatRiwayatBooking()
+
+    } catch (error) {
+      authError = error.message
+    } finally {
+      authLoading = false
+    }
+  }
+
+  // LOGOUT
+  function logout() {
+    localStorage.removeItem('token')
+    localStorage.removeItem('user')
+
+    token = ''
+    user = null
+    riwayatBooking = []
+    riwayatError = ''
+    authSuccess = ''
+    authError = ''
+  }
+
+  // MENGAMBIL RIWAYAT BOOKING PELANGGAN
+  async function muatRiwayatBooking() {
+    if (!token || !user) {
+      riwayatBooking = []
+      return
+    }
+
+    riwayatLoading = true
+    riwayatError = ''
+
+    try {
+      const response = await fetch('/api/booking/saya', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      const hasil = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          hasil.message || 'Gagal mengambil riwayat booking.'
+        )
+      }
+
+      riwayatBooking = hasil.data || []
+
+    } catch (error) {
+      riwayatError = error.message
+    } finally {
+      riwayatLoading = false
+    }
+  }
+
+  // FORMAT TANGGAL
+  function formatTanggal(tanggal) {
+    if (!tanggal) return '-'
+
+    return new Date(tanggal).toLocaleDateString('id-ID', {
+      day: '2-digit',
+      month: 'long',
+      year: 'numeric',
+      timeZone: 'Asia/Jakarta'
+    })
+  }
+
+  // FORMAT HARGA
+  function formatHarga(harga) {
+    return Number(harga || 0).toLocaleString('id-ID')
+  }
+
+  // FORMAT JAM
+  function formatJam(jam) {
+    return jam ? jam.slice(0, 5) : '-'
+  }
+
+  function tanggalHariIni() {
+    const sekarang = new Date()
+    const tahun = sekarang.getFullYear()
+    const bulan = String(sekarang.getMonth() + 1).padStart(2, '0')
+    const tanggal = String(sekarang.getDate()).padStart(2, '0')
+
+    return `${tahun}-${bulan}-${tanggal}`
+  }
+
+  // MEMILIH BARBERSHOP
   async function pilihBarbershop(shop) {
     selectedShop = shop
     detailLoading = true
@@ -23,7 +217,7 @@
     services = []
 
     try {
-     const [responseBarber, responseLayanan] = await Promise.all([
+      const [responseBarber, responseLayanan] = await Promise.all([
         fetch('/api/barber'),
         fetch('/api/layanan')
       ])
@@ -44,10 +238,91 @@
       services = hasilLayanan.data.filter(
         (item) => item.barbershop_id === shop.id
       )
+
     } catch (error) {
       detailError = error.message
     } finally {
+      await tick()
+
+      document.getElementById('detail-barbershop')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      })
+
       detailLoading = false
+    }
+  }
+
+  // MEMBUAT BOOKING
+  async function buatBooking() {
+    bookingError = ''
+    bookingSuccess = ''
+
+    if (!token || !user) {
+      bookingError = 'Silakan login terlebih dahulu sebelum booking.'
+      showAuthModal = true
+      modeAuth = 'login'
+      return
+    }
+
+    if (
+      !namaPelanggan.trim() ||
+      !selectedBarberId ||
+      !selectedServiceId ||
+      !tanggalBooking ||
+      !jamBooking
+    ) {
+      bookingError = 'Mohon lengkapi semua data booking.'
+      return
+    }
+
+    if (tanggalBooking < tanggalHariIni()) {
+      bookingError = 'Tanggal booking tidak boleh di masa lalu.'
+      return
+    }
+
+    bookingLoading = true
+
+    try {
+      const response = await fetch('/api/booking', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          barber_id: Number(selectedBarberId),
+          layanan_id: Number(selectedServiceId),
+          nama_pelanggan: namaPelanggan.trim(),
+          tanggal: tanggalBooking,
+          jam: jamBooking
+        })
+      })
+
+      const hasil = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          hasil.message || hasil.error || 'Booking gagal dibuat.'
+        )
+      }
+
+      bookingSuccess =
+        hasil.message || 'Booking berhasil dikirim!'
+
+      namaPelanggan = ''
+      selectedBarberId = ''
+      selectedServiceId = ''
+      tanggalBooking = ''
+      jamBooking = ''
+
+      // Memperbarui riwayat setelah booking berhasil
+      await muatRiwayatBooking()
+
+    } catch (error) {
+      bookingError = error.message
+    } finally {
+      bookingLoading = false
     }
   }
 
@@ -57,12 +332,13 @@
     services = []
     detailError = ''
   }
-    
-  // Menghitung status buka berdasarkan jam operasional
+
+  // MENGHITUNG STATUS BUKA
   function cekStatusBuka(jamBuka, jamTutup) {
     if (!jamBuka || !jamTutup) return false
 
     const sekarang = new Date()
+
     const waktuSekarang =
       sekarang.getHours() * 3600 +
       sekarang.getMinutes() * 60 +
@@ -78,11 +354,10 @@
       return waktuSekarang >= mulai && waktuSekarang < selesai
     }
 
-    // Mendukung barbershop yang buka melewati tengah malam
     return waktuSekarang >= mulai || waktuSekarang < selesai
   }
 
-  // Mengambil data dari backend
+  // MENGAMBIL DATA BARBERSHOP
   async function muatBarbershop() {
     loading = true
     errorMessage = ''
@@ -102,6 +377,7 @@
           ...shop,
           statusBuka: cekStatusBuka(shop.jam_buka, shop.jam_tutup)
         }))
+
     } catch (error) {
       errorMessage = error.message
     } finally {
@@ -109,11 +385,16 @@
     }
   }
 
+  // SAAT HALAMAN DIBUKA
   onMount(() => {
     muatBarbershop()
+
+    if (token && user) {
+      muatRiwayatBooking()
+    }
   })
 
-  // Pencarian dan filter
+  // PENCARIAN DAN FILTER
   let filteredShops = $derived(
     barbershops.filter((shop) => {
       const matchSearch =
@@ -148,16 +429,45 @@
     <a href="#home">Beranda</a>
     <a href="#barbershops">Barbershop</a>
     <a href="#about">Tentang</a>
+
+    {#if user && user.role === 'pelanggan'}
+      <a href="#riwayat">Riwayat Booking</a>
+    {/if}
   </nav>
 
-  <button class="login-button">Masuk</button>
+  {#if user}
+    <div class="user-menu">
+      <span>Halo, {user.nama}</span>
+      <button class="login-button" onclick={logout}>
+        Keluar
+      </button>
+    </div>
+  {:else}
+    <button
+      class="login-button"
+      onclick={() => {
+        modeAuth = 'login'
+        showAuthModal = true
+        authError = ''
+        authSuccess = ''
+      }}
+    >
+      Masuk
+    </button>
+  {/if}
 </header>
 
 <main>
+  <!-- BERANDA -->
   <section class="hero" id="home">
     <div class="hero-content">
       <span class="eyebrow">✦ BOOK YOUR STYLE</span>
-      <h1>Temukan Gaya Terbaikmu, <span>Mulai dari Sini.</span></h1>
+
+      <h1>
+        Temukan Gaya Terbaikmu,
+        <span>Mulai dari Sini.</span>
+      </h1>
+
       <p>
         Cari barbershop terbaik di Pamekasan, pilih barber favoritmu,
         dan booking jadwal potong rambut tanpa harus antre.
@@ -179,6 +489,7 @@
         src="https://images.unsplash.com/photo-1622286342621-4bd786c2447c?w=1000"
         alt="Suasana barbershop modern"
       />
+
       <div class="image-label">
         <span>✦</span>
         Your Style, Your Choice
@@ -186,6 +497,7 @@
     </div>
   </section>
 
+  <!-- DAFTAR BARBERSHOP -->
   <section class="shops-section" id="barbershops">
     <div class="section-heading">
       <div>
@@ -193,12 +505,14 @@
         <h2>Barbershop Pilihan</h2>
         <p>Temukan tempat potong rambut di sekitar Pamekasan.</p>
       </div>
+
       <span class="location-label">⌖ Pamekasan, Madura</span>
     </div>
 
     <div class="search-panel">
       <div class="search-box">
         <span>⌕</span>
+
         <input
           bind:value={search}
           placeholder="Cari nama barbershop..."
@@ -217,70 +531,71 @@
       </div>
     </div>
 
+    <div class="shop-grid">
+      {#if loading}
+        <p class="empty">Sedang memuat data barbershop...</p>
 
-<div class="shop-grid">
-  {#if loading}
-    <p class="empty">Sedang memuat data barbershop...</p>
-
-  {:else if errorMessage}
-    <div class="empty">
-      <p>{errorMessage}</p>
-      <button onclick={muatBarbershop}>Coba Lagi</button>
-    </div>
-
-  {:else if filteredShops.length > 0}
-    {#each filteredShops as shop (shop.id)}
-      <article class="shop-card">
-        <div class="shop-image">
-          <img
-            src="https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=800"
-            alt={shop.nama}
-          />
-
-          <span
-            class:closed={!shop.statusBuka}
-            class="status"
-          >
-            ● {shop.statusBuka ? 'Buka' : 'Tutup'}
-          </span>
+      {:else if errorMessage}
+        <div class="empty">
+          <p>{errorMessage}</p>
+          <button onclick={muatBarbershop}>Coba Lagi</button>
         </div>
 
-        <div class="shop-info">
-          <div class="shop-title">
-            <h3>{shop.nama}</h3>
-          </div>
+      {:else if filteredShops.length > 0}
+        {#each filteredShops as shop (shop.id)}
+          <article class="shop-card">
+            <div class="shop-image">
+              <img
+                src="https://images.unsplash.com/photo-1503951914875-452162b0f3f1?w=800"
+                alt={shop.nama}
+              />
 
-          <p class="address">⌖ {shop.alamat}</p>
-
-          <p class="distance">
-            Jam operasional: {shop.jam_buka || '--:--'} -
-            {shop.jam_tutup || '--:--'}
-          </p>
-
-          <div class="shop-footer">
-            <div>
-              <small>Telepon</small>
-              <strong>{shop.telepon || 'Belum tersedia'}</strong>
+              <span
+                class:closed={!shop.statusBuka}
+                class="status"
+              >
+                ● {shop.statusBuka ? 'Buka' : 'Tutup'}
+              </span>
             </div>
 
-            <button onclick={() => pilihBarbershop(shop)}>
-              Pilih →
-            </button>
+            <div class="shop-info">
+              <div class="shop-title">
+                <h3>{shop.nama}</h3>
+              </div>
 
-          </div>
-        </div>
-      </article>
-    {/each}
+              <p class="address">⌖ {shop.alamat}</p>
 
-  {:else}
-    <p class="empty">Barbershop tidak ditemukan.</p>
-  {/if}
-</div>
+              <p class="distance">
+                Jam operasional: {shop.jam_buka || '--:--'} -
+                {shop.jam_tutup || '--:--'}
+              </p>
 
+              <div class="shop-footer">
+                <div>
+                  <small>Telepon</small>
+                  <strong>{shop.telepon || 'Belum tersedia'}</strong>
+                </div>
+
+                <button onclick={() => pilihBarbershop(shop)}>
+                  Pilih →
+                </button>
+              </div>
+            </div>
+          </article>
+        {/each}
+
+      {:else}
+        <p class="empty">Barbershop tidak ditemukan.</p>
+      {/if}
+    </div>
   </section>
-  
+
+  <!-- DETAIL BARBERSHOP -->
   {#if selectedShop}
-    <section class="shops-section detail-section">
+    <section
+      id="detail-barbershop"
+      class="shops-section detail-section"
+    >
       <button class="back-button" onclick={kembaliKeDaftar}>
         ← Kembali ke daftar
       </button>
@@ -298,10 +613,12 @@
           <h3>Informasi Barbershop</h3>
           <p class="address">Alamat: {selectedShop.alamat}</p>
           <p>Telepon: {selectedShop.telepon || 'Belum tersedia'}</p>
+
           <p>
             Jam operasional:
             {selectedShop.jam_buka} - {selectedShop.jam_tutup}
           </p>
+
           <p>
             Status:
             <strong>{selectedShop.statusBuka ? 'Buka' : 'Tutup'}</strong>
@@ -311,8 +628,10 @@
 
       {#if detailLoading}
         <p class="empty">Memuat data barber dan layanan...</p>
+
       {:else if detailError}
         <p class="empty">{detailError}</p>
+
       {:else}
         <div class="detail-list">
           <h3>Barber Kami</h3>
@@ -340,9 +659,11 @@
               <article class="shop-card detail-item">
                 <div class="shop-info">
                   <h4>{service.nama_layanan}</h4>
+
                   <p class="service-price">
                     Rp{Number(service.harga).toLocaleString('id-ID')}
                   </p>
+
                   <p>Durasi: {service.durasi} menit</p>
                 </div>
               </article>
@@ -355,7 +676,84 @@
     </section>
   {/if}
 
+  <!-- FORM BOOKING -->
+  <div class="detail-list booking-section">
+    <h3>Booking Jadwal</h3>
+    <p>Isi data berikut untuk memesan jadwal potong rambut.</p>
 
+    <div class="booking-form">
+      <label>
+        Nama Pelanggan
+        <input
+          type="text"
+          bind:value={namaPelanggan}
+          placeholder="Masukkan nama kamu"
+        />
+      </label>
+
+      <label>
+        Pilih Barber
+        <select bind:value={selectedBarberId}>
+          <option value="">Pilih barber</option>
+
+          {#each barbers as barber}
+            <option value={String(barber.id)}>
+              {barber.nama}
+            </option>
+          {/each}
+        </select>
+      </label>
+
+      <label>
+        Pilih Layanan
+        <select bind:value={selectedServiceId}>
+          <option value="">Pilih layanan</option>
+
+          {#each services as service}
+            <option value={String(service.id)}>
+              {service.nama_layanan} -
+              Rp{Number(service.harga).toLocaleString('id-ID')}
+            </option>
+          {/each}
+        </select>
+      </label>
+
+      <label>
+        Tanggal Booking
+        <input
+          type="date"
+          bind:value={tanggalBooking}
+          min={tanggalHariIni()}
+        />
+      </label>
+
+      <label>
+        Jam Booking
+        <input
+          type="time"
+          bind:value={jamBooking}
+        />
+      </label>
+
+      {#if bookingError}
+        <p class="booking-error">{bookingError}</p>
+      {/if}
+
+      {#if bookingSuccess}
+        <p class="booking-success">{bookingSuccess}</p>
+      {/if}
+
+      <button
+        class="booking-submit"
+        onclick={buatBooking}
+        disabled={bookingLoading}
+      >
+        {bookingLoading ? 'Mengirim...' : 'Konfirmasi Booking'}
+      </button>
+    </div>
+  </div>
+
+  <!-- DETAIL BARBERSHOP KEDUA (DIPERTAHANKAN DARI KODE LAMA) -->
   {#if selectedShop}
     <section class="shops-section detail-section">
       <button class="back-button" onclick={kembaliKeDaftar}>
@@ -398,14 +796,215 @@
     </section>
   {/if}
 
+  <!-- RIWAYAT BOOKING PELANGGAN -->
+  {#if user && user.role === 'pelanggan'}
+    <section class="shops-section" id="riwayat">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">MY BOOKING</span>
+          <h2>Riwayat Booking Saya</h2>
+          <p>Lihat daftar pemesanan yang pernah kamu lakukan.</p>
+        </div>
+
+        <button
+          class="back-button"
+          onclick={muatRiwayatBooking}
+          disabled={riwayatLoading}
+        >
+          {riwayatLoading ? 'Memuat...' : '↻ Refresh'}
+        </button>
+      </div>
+
+      {#if riwayatLoading}
+        <p class="empty">Sedang memuat riwayat booking...</p>
+
+      {:else if riwayatError}
+        <div class="empty">
+          <p>{riwayatError}</p>
+
+          <button onclick={muatRiwayatBooking}>
+            Coba Lagi
+          </button>
+        </div>
+
+      {:else if riwayatBooking.length > 0}
+        <div class="shop-grid">
+          {#each riwayatBooking as booking (booking.id)}
+            <article class="shop-card">
+              <div class="shop-info">
+                <div class="shop-title">
+                  <h3>Booking #{booking.id}</h3>
+
+                  <span class="status">
+                    {booking.status}
+                  </span>
+                </div>
+
+                <p class="address">
+                  Barber: {booking.nama_barber || '-'}
+                </p>
+
+                <p>
+                  Layanan: {booking.nama_layanan || '-'}
+                </p>
+
+                <p>
+                  Harga: Rp{formatHarga(booking.harga)}
+                </p>
+
+                <p>
+                  Durasi: {booking.durasi || '-'} menit
+                </p>
+
+                <p>
+                  Tanggal: {formatTanggal(booking.tanggal)}
+                </p>
+
+                <p>
+                  Jam: {formatJam(booking.jam)}
+                </p>
+              </div>
+            </article>
+          {/each}
+        </div>
+
+      {:else}
+        <div class="empty">
+          <p>Kamu belum memiliki riwayat booking.</p>
+
+          <a href="#barbershops" class="primary-button">
+            Cari Barbershop
+          </a>
+        </div>
+      {/if}
+    </section>
+  {/if}
+
+  <!-- TENTANG -->
   <section class="about-section" id="about">
     <span class="eyebrow">WHY BARBERBOOK?</span>
-    <h2>Booking Lebih Mudah, Potong Rambut Lebih Nyaman.</h2>
+
+    <h2>
+      Booking Lebih Mudah, Potong Rambut Lebih Nyaman.
+    </h2>
+
     <p>
       Satu platform untuk menemukan barbershop, memilih barber,
       dan mengatur jadwal potong rambut.
     </p>
   </section>
+
+  <!-- MODAL LOGIN DAN REGISTRASI -->
+  {#if showAuthModal}
+    <div
+      class="auth-overlay"
+      onclick={(e) => {
+        if (e.target === e.currentTarget) showAuthModal = false
+      }}
+    >
+      <div class="auth-modal">
+        <button
+          class="auth-close"
+          onclick={() => showAuthModal = false}
+        >
+          ×
+        </button>
+
+        <h2>
+          {modeAuth === 'login' ? 'Selamat Datang!' : 'Buat Akun Baru'}
+        </h2>
+
+        <p>
+          {modeAuth === 'login'
+            ? 'Silakan masuk ke akun Anda.'
+            : 'Daftar untuk mulai melakukan booking.'}
+        </p>
+
+        <form
+          onsubmit={(e) => {
+            e.preventDefault()
+            prosesAuth()
+          }}
+        >
+          {#if modeAuth === 'register'}
+            <label>Nama Lengkap</label>
+
+            <input
+              type="text"
+              bind:value={namaAuth}
+              placeholder="Masukkan nama lengkap"
+              required
+            />
+          {/if}
+
+          <label>Email</label>
+
+          <input
+            type="email"
+            bind:value={emailAuth}
+            placeholder="Masukkan email"
+            required
+          />
+
+          <label>Password</label>
+
+          <input
+            type="password"
+            bind:value={passwordAuth}
+            placeholder="Masukkan password"
+            required
+            minlength="6"
+          />
+
+          {#if authError}
+            <p class="auth-error">{authError}</p>
+          {/if}
+
+          {#if authSuccess}
+            <p class="auth-success">{authSuccess}</p>
+          {/if}
+
+          <button
+            type="submit"
+            class="auth-submit"
+            disabled={authLoading}
+          >
+            {authLoading
+              ? 'Memproses...'
+              : modeAuth === 'login' ? 'Masuk' : 'Daftar'}
+          </button>
+        </form>
+
+        <div class="auth-switch">
+          {#if modeAuth === 'login'}
+            Belum punya akun?
+
+            <button
+              onclick={() => {
+                modeAuth = 'register'
+                authError = ''
+                authSuccess = ''
+              }}
+            >
+              Daftar sekarang
+            </button>
+          {:else}
+            Sudah punya akun?
+
+            <button
+              onclick={() => {
+                modeAuth = 'login'
+                authError = ''
+                authSuccess = ''
+              }}
+            >
+              Masuk
+            </button>
+          {/if}
+        </div>
+      </div>
+    </div>
+  {/if}
 </main>
 
 <footer>
@@ -413,5 +1012,8 @@
     <span class="brand-icon">B</span>
     BARBER<span>BOOK</span>
   </a>
-  <p>© 2026 BARBERBOOK. Booking barbershop jadi lebih mudah.</p>
+
+  <p>
+    © 2026 BARBERBOOK. Booking barbershop jadi lebih mudah.
+  </p>
 </footer>
