@@ -10,6 +10,7 @@
   let authSuccess = $state('')
 
   let namaAuth = $state('')
+  let usernameAuth = $state('')
   let emailAuth = $state('')
   let passwordAuth = $state('')
 
@@ -29,6 +30,12 @@
   let riwayatBooking = $state([])
   let riwayatLoading = $state(false)
   let riwayatError = $state('')
+
+    // DATA BOOKING ADMIN
+  let semuaBooking = $state([])
+  let adminBookingLoading = $state(false)
+  let adminBookingError = $state('')
+  let adminBookingSuccess = $state('')
 
   // DATA BARBERSHOP
   let search = $state('')
@@ -59,14 +66,16 @@
     authError = ''
     authSuccess = ''
 
-    if (!emailAuth.trim() || !passwordAuth) {
-      authError = 'Email dan password wajib diisi.'
-      return
-    }
-
-    if (modeAuth === 'register' && !namaAuth.trim()) {
-      authError = 'Nama wajib diisi.'
-      return
+    if (modeAuth === 'login') {
+      if (!usernameAuth.trim() || !passwordAuth) {
+        authError = 'Username dan password wajib diisi.'
+        return
+      }
+    } else {
+      if (!namaAuth.trim() || !emailAuth.trim() || !passwordAuth) {
+        authError = 'Nama, email, dan password wajib diisi.'
+        return
+      }
     }
 
     authLoading = true
@@ -78,10 +87,10 @@
 
       const body = modeAuth === 'login'
         ? {
-            email: emailAuth.trim(),
+            username: usernameAuth.trim(),
             password: passwordAuth
           }
-        : {
+        :  {
             nama: namaAuth.trim(),
             email: emailAuth.trim(),
             password: passwordAuth
@@ -103,6 +112,7 @@
         authSuccess = 'Registrasi berhasil. Silakan login.'
         modeAuth = 'login'
         namaAuth = ''
+        emailAuth = ''
         passwordAuth = ''
         return
       }
@@ -115,30 +125,45 @@
 
       showAuthModal = false
       authSuccess = ''
-      emailAuth = ''
+      usernameAuth = ''
       passwordAuth = ''
 
-      // Memuat riwayat setelah login
-      await muatRiwayatBooking()
+      if (user.role === 'admin') {
+        await muatSemuaBooking()
+      } else if (user.role === 'pelanggan') {
+        await muatRiwayatBooking()
+      }
 
     } catch (error) {
-      authError = error.message
+    authError = error.message
     } finally {
       authLoading = false
     }
   }
 
   // LOGOUT
-  function logout() {
+   function logout() {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
 
     token = ''
     user = null
+
     riwayatBooking = []
+    riwayatLoading = false
     riwayatError = ''
+
+    semuaBooking = []
+    adminBookingLoading = false
+    adminBookingError = ''
+    adminBookingSuccess = ''
+
     authSuccess = ''
     authError = ''
+
+    selectedShop = null
+    barbers = []
+    services = []
   }
 
   // MENGAMBIL RIWAYAT BOOKING PELANGGAN
@@ -173,6 +198,41 @@
       riwayatError = error.message
     } finally {
       riwayatLoading = false
+    }
+  }
+
+    // MENGAMBIL SEMUA BOOKING UNTUK ADMIN
+  async function muatSemuaBooking() {
+    if (!token || !user || user.role !== 'admin') {
+      semuaBooking = []
+      return
+    }
+
+    adminBookingLoading = true
+    adminBookingError = ''
+
+    try {
+      const response = await fetch('/api/booking', {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      })
+
+      const hasil = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          hasil.message || 'Gagal mengambil semua booking.'
+        )
+      }
+
+      semuaBooking = hasil.data || []
+
+    } catch (error) {
+      adminBookingError = error.message
+    } finally {
+      adminBookingLoading = false
     }
   }
 
@@ -317,7 +377,11 @@
       jamBooking = ''
 
       // Memperbarui riwayat setelah booking berhasil
-      await muatRiwayatBooking()
+      if (user.role === 'admin') {
+        await muatSemuaBooking()
+      } else if (user.role === 'pelanggan') {
+        await muatRiwayatBooking()
+      }
 
     } catch (error) {
       bookingError = error.message
@@ -384,13 +448,63 @@
       loading = false
     }
   }
+    // MENGUBAH STATUS BOOKING OLEH ADMIN
+  async function ubahStatusBooking(id, status) {
+    adminBookingError = ''
+    adminBookingSuccess = ''
+
+    if (status !== 'dikonfirmasi' && status !== 'dibatalkan') {
+      adminBookingError = 'Status booking tidak valid.'
+      return
+    }
+
+    const pesan = status === 'dikonfirmasi'
+      ? 'Apakah kamu yakin ingin menerima booking ini?'
+      : 'Apakah kamu yakin ingin menolak booking ini?'
+
+    if (!window.confirm(pesan)) {
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/booking/${id}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ status })
+      })
+
+      const hasil = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          hasil.message || 'Gagal mengubah status booking.'
+        )
+      }
+
+      adminBookingSuccess = status === 'dikonfirmasi'
+        ? 'Booking berhasil dikonfirmasi.'
+        : 'Booking berhasil ditolak.'
+
+      await muatSemuaBooking()
+
+    } catch (error) {
+      adminBookingError = error.message
+    }
+  }
 
   // SAAT HALAMAN DIBUKA
   onMount(() => {
     muatBarbershop()
 
     if (token && user) {
-      muatRiwayatBooking()
+      if (user.role === 'admin') {
+        muatSemuaBooking()
+      } else if (user.role === 'pelanggan') {
+        muatRiwayatBooking()
+      }
     }
   })
 
@@ -458,7 +572,106 @@
 </header>
 
 <main>
-  <!-- BERANDA -->
+  {#if user && user.role === 'admin'}
+    <!-- DASHBOARD ADMIN -->
+    <section class="shops-section">
+      <div class="section-heading">
+        <div>
+          <span class="eyebrow">ADMIN PANEL</span>
+          <h2>Dashboard Admin</h2>
+          <p>Kelola dan pantau seluruh booking pelanggan BARBERBOOK.</p>
+        </div>
+
+        <button
+          class="back-button"
+          onclick={muatSemuaBooking}
+          disabled={adminBookingLoading}
+        >
+          {adminBookingLoading ? 'Memuat...' : 'Refresh Booking'}
+        </button>
+      </div>
+
+      <div class="shop-grid">
+        <article class="shop-card">
+          <div class="shop-info">
+            <small>Total Booking</small>
+            <h3>{semuaBooking.length}</h3>
+          </div>
+        </article>
+
+        <article class="shop-card">
+          <div class="shop-info">
+            <small>Menunggu Konfirmasi</small>
+            <h3>{semuaBooking.filter(b => b.status === 'menunggu').length}</h3>
+          </div>
+        </article>
+
+        <article class="shop-card">
+          <div class="shop-info">
+            <small>Dikonfirmasi</small>
+            <h3>{semuaBooking.filter(b => b.status === 'dikonfirmasi').length}</h3>
+          </div>
+        </article>
+      </div>
+
+      {#if adminBookingSuccess}
+        <p class="booking-success">{adminBookingSuccess}</p>
+      {/if}
+
+      {#if adminBookingError}
+        <div class="empty">
+          <p>{adminBookingError}</p>
+          <button onclick={muatSemuaBooking}>Coba Lagi</button>
+        </div>
+      {:else if adminBookingLoading}
+        <p class="empty">Sedang memuat semua booking...</p>
+      {:else if semuaBooking.length > 0}
+        <div class="shop-grid">
+          {#each semuaBooking as booking (booking.id)}
+            <article class="shop-card">
+              <div class="shop-info">
+                <h3>Booking #{booking.id}</h3>
+
+                <p><strong>Pelanggan:</strong> {booking.nama_pelanggan}</p>
+                <p><strong>Barber:</strong> {booking.nama_barber}</p>
+                <p><strong>Layanan:</strong> {booking.nama_layanan}</p>
+                <p><strong>Harga:</strong> {formatHarga(booking.harga)}</p>
+                <p><strong>Tanggal:</strong> {formatTanggal(booking.tanggal)}</p>
+                <p><strong>Jam:</strong> {formatJam(booking.jam)}</p>
+                <p>
+                  <strong>Status:</strong>
+                  <span class="status">{booking.status}</span>
+                </p>
+
+                {#if booking.status === 'menunggu'}
+                  <div class="shop-footer">
+                    <button
+                      class="booking-submit"
+                      onclick={() => ubahStatusBooking(booking.id, 'dikonfirmasi')}
+                    >
+                      Terima
+                    </button>
+
+                    <button
+                      class="back-button"
+                      onclick={() => ubahStatusBooking(booking.id, 'dibatalkan')}
+                    >
+                      Tolak
+                    </button>
+                  </div>
+                {/if}
+              </div>
+            </article>
+          {/each}
+        </div>
+      {:else}
+        <div class="empty">
+          <p>Belum ada booking dari pelanggan.</p>
+        </div>
+      {/if}
+    </section>
+  {:else}
+    <!-- HALAMAN PELANGGAN -->
   <section class="hero" id="home">
     <div class="hero-content">
       <span class="eyebrow">✦ BOOK YOUR STYLE</span>
@@ -894,14 +1107,12 @@
     </p>
   </section>
 
+  {/if}
+
   <!-- MODAL LOGIN DAN REGISTRASI -->
   {#if showAuthModal}
-    <div
-      class="auth-overlay"
-      onclick={(e) => {
-        if (e.target === e.currentTarget) showAuthModal = false
-      }}
-    >
+    <div class="auth-overlay">
+    
       <div class="auth-modal">
         <button
           class="auth-close"
@@ -926,35 +1137,50 @@
             prosesAuth()
           }}
         >
-          {#if modeAuth === 'register'}
-            <label>Nama Lengkap</label>
-
-            <input
-              type="text"
-              bind:value={namaAuth}
-              placeholder="Masukkan nama lengkap"
-              required
-            />
-          {/if}
-
-          <label>Email</label>
+        {#if modeAuth === 'register'}
+          <label for="namaAuth">Nama Lengkap</label>
 
           <input
+            id="namaAuth"
+            type="text"
+            bind:value={namaAuth}
+            placeholder="Masukkan nama lengkap"
+            required
+          />
+        {/if}
+
+        {#if modeAuth === 'login'}
+          <label for="usernameAuth">Username</label>
+
+          <input
+            id="usernameAuth"
+            type="text"
+            bind:value={usernameAuth}
+            placeholder="Masukkan username"
+            required
+          />
+        {:else}
+          <label for="emailAuth">Email</label>
+
+          <input
+            id="emailAuth"
             type="email"
             bind:value={emailAuth}
             placeholder="Masukkan email"
             required
           />
+        {/if}
 
-          <label>Password</label>
+        <label for="passwordAuth">Password</label>
 
-          <input
-            type="password"
-            bind:value={passwordAuth}
-            placeholder="Masukkan password"
-            required
-            minlength="6"
-          />
+        <input
+          id="passwordAuth"
+          type="password"
+          bind:value={passwordAuth}
+          placeholder="Masukkan password"
+          required
+          minlength="6"
+        />
 
           {#if authError}
             <p class="auth-error">{authError}</p>
